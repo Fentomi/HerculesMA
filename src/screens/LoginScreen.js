@@ -52,7 +52,7 @@ export default function LoginScreen({ navigation }) {
           signIn(currentUser); // сохраняем в контексте
           navigation.reset({
             index: 0,
-            routes: [{ name: 'Home' }],
+            routes: [{ name: 'Main' }],
           });
         } else {
           Alert.alert('Ошибка', 'Неизвестный тип пользователя');
