@@ -11,8 +11,7 @@ import {
   Platform,
 } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
-
-const API_URL = 'http://localhost:5000';
+import { API_URL } from '../constants/api';
 
 export default function LoginScreen({ navigation }) {
   const { signIn } = useAuth();
