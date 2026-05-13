@@ -1,33 +1,27 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
-  View,
-  Text,
-  FlatList,
-  TouchableOpacity,
-  StyleSheet,
-  Alert,
-  Modal,
-  ScrollView,
-  ActivityIndicator,
-  LayoutAnimation,
-  Platform,
-  UIManager,
+  View, Text, FlatList, TouchableOpacity, StyleSheet, Alert,
+  Modal, ScrollView, ActivityIndicator, LayoutAnimation,
+  Platform, UIManager,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../../contexts/AuthContext';
 import { API_URL } from '../../constants/api';
-import { useFocusEffect } from '@react-navigation/native';
+import ServiceDetailModal from './ServiceDetailModal';
 
-// Включаем LayoutAnimation для Android
 if (Platform.OS === 'android') {
   if (UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true);
   }
 }
 
-// Карточка купленной услуги
-const PurchasedServiceCard = ({ item, isExpired }) => (
-  <View style={[styles.card, isExpired && styles.cardExpired]}>
+const PurchasedServiceCard = ({ item, isExpired, onPress }) => (
+  <TouchableOpacity
+    style={[styles.card, isExpired && styles.cardExpired]}
+    onPress={() => onPress(item)}
+    activeOpacity={0.7}
+  >
     <View style={styles.cardHeader}>
       <Text style={styles.serviceName}>{item.service_name}</Text>
       <Text style={[styles.remainingBadge, isExpired ? styles.expiredBadge : styles.activeBadge]}>
@@ -40,7 +34,7 @@ const PurchasedServiceCard = ({ item, isExpired }) => (
       <DetailRow label="Способ оплаты" value={item.payment_method} />
       {item.trainer && <DetailRow label="Тренер" value={item.trainer} />}
     </View>
-  </View>
+  </TouchableOpacity>
 );
 
 const DetailRow = ({ label, value }) => (
@@ -50,18 +44,21 @@ const DetailRow = ({ label, value }) => (
   </View>
 );
 
-// Основной экран
 export default function ServicesScreen() {
   const { clientId } = useAuth();
-  const [services, setServices] = useState([]); // все услуги
+  const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showExpired, setShowExpired] = useState(false); // раскрыт ли список использованных
+  const [showExpired, setShowExpired] = useState(false);
 
-  // Модальное окно покупки
-  const [showModal, setShowModal] = useState(false);
+  // Покупка
+  const [showBuyModal, setShowBuyModal] = useState(false);
   const [availableServices, setAvailableServices] = useState([]);
   const [selectedService, setSelectedService] = useState(null);
   const [buyLoading, setBuyLoading] = useState(false);
+
+  // Детальный просмотр
+  const [selectedServiceId, setSelectedServiceId] = useState(null);
+  const [detailVisible, setDetailVisible] = useState(false);
 
   const loadServices = useCallback(async () => {
     if (!clientId) return;
@@ -77,14 +74,8 @@ export default function ServicesScreen() {
   }, [clientId]);
 
   useFocusEffect(
-    useCallback(() => {
-      loadServices();
-    }, [loadServices])
+    useCallback(() => { loadServices(); }, [loadServices])
   );
-
-  useEffect(() => {
-    loadServices();
-  }, [loadServices]);
 
   const activeServices = services.filter(s => s.remaining > 0);
   const expiredServices = services.filter(s => s.remaining === 0);
@@ -94,7 +85,6 @@ export default function ServicesScreen() {
     setShowExpired(prev => !prev);
   };
 
-  // Загрузка каталога для покупки (только групповые тренировки без trainer_id)
   const loadAvailable = async () => {
     try {
       const res = await fetch(`${API_URL}/services/`);
@@ -122,7 +112,7 @@ export default function ServicesScreen() {
   };
 
   const handleBuyPress = () => {
-    setShowModal(true);
+    setShowBuyModal(true);
     loadAvailable();
   };
 
@@ -147,7 +137,7 @@ export default function ServicesScreen() {
       });
       if (res.ok) {
         Alert.alert('Успех', 'Услуга приобретена');
-        setShowModal(false);
+        setShowBuyModal(false);
         setSelectedService(null);
         loadServices();
       } else {
@@ -159,6 +149,11 @@ export default function ServicesScreen() {
     } finally {
       setBuyLoading(false);
     }
+  };
+
+  const openDetail = (item) => {
+    setSelectedServiceId(item.client_services_id);
+    setDetailVisible(true);
   };
 
   if (loading) {
@@ -176,19 +171,17 @@ export default function ServicesScreen() {
       </TouchableOpacity>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Активные услуги */}
         {activeServices.length > 0 ? (
           <>
             <Text style={styles.sectionTitle}>Активные услуги</Text>
             {activeServices.map(item => (
-              <PurchasedServiceCard key={item.client_services_id} item={item} isExpired={false} />
+              <PurchasedServiceCard key={item.client_services_id} item={item} isExpired={false} onPress={openDetail} />
             ))}
           </>
         ) : (
           <Text style={styles.emptyText}>Нет активных услуг</Text>
         )}
 
-        {/* Использованные услуги */}
         {expiredServices.length > 0 && (
           <View style={styles.expiredSection}>
             <TouchableOpacity style={styles.expiredToggle} onPress={toggleExpired} activeOpacity={0.7}>
@@ -200,7 +193,7 @@ export default function ServicesScreen() {
             {showExpired && (
               <View style={styles.expiredList}>
                 {expiredServices.map(item => (
-                  <PurchasedServiceCard key={item.client_services_id} item={item} isExpired={true} />
+                  <PurchasedServiceCard key={item.client_services_id} item={item} isExpired={true} onPress={openDetail} />
                 ))}
               </View>
             )}
@@ -208,214 +201,85 @@ export default function ServicesScreen() {
         )}
       </ScrollView>
 
-      {/* Модальное окно покупки */}
-      <Modal visible={showModal} animationType="slide" transparent>
+      {/* Модалка покупки (без изменений) */}
+      <Modal visible={showBuyModal} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <ScrollView>
               <Text style={styles.modalTitle}>Выберите групповую тренировку</Text>
-
               {availableServices.map(service => (
                 <TouchableOpacity
                   key={service.service_id}
-                  style={[
-                    styles.serviceOption,
-                    selectedService?.service_id === service.service_id && styles.selectedOption,
-                  ]}
+                  style={[styles.serviceOption, selectedService?.service_id === service.service_id && styles.selectedOption]}
                   onPress={() => setSelectedService(service)}
                 >
                   <Text style={styles.optionName}>{service.name}</Text>
-                  <Text style={styles.optionMeta}>
-                    {service.categoryName} / {service.subcategoryName}
-                  </Text>
-                  <Text style={styles.optionPrice}>
-                    {service.price} ₽ · {service.use_count} занятий
-                  </Text>
+                  <Text style={styles.optionMeta}>{service.categoryName} / {service.subcategoryName}</Text>
+                  <Text style={styles.optionPrice}>{service.price} ₽ · {service.use_count} занятий</Text>
                 </TouchableOpacity>
               ))}
-
               <View style={styles.infoBox}>
-                <Text style={styles.infoText}>
-                  Персональные тренировки приобретаются только через администратора клуба.
-                </Text>
+                <Text style={styles.infoText}>Персональные тренировки приобретаются только через администратора клуба.</Text>
               </View>
-
               <View style={styles.modalButtons}>
-                <TouchableOpacity
-                  style={[styles.button, styles.cancelButton]}
-                  onPress={() => {
-                    setShowModal(false);
-                    setSelectedService(null);
-                  }}
-                >
+                <TouchableOpacity style={[styles.button, styles.cancelButton]} onPress={() => { setShowBuyModal(false); setSelectedService(null); }}>
                   <Text>Отмена</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.button, styles.confirmButton]}
-                  onPress={handlePurchase}
-                  disabled={!selectedService || buyLoading}
-                >
-                  {buyLoading ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text style={{ color: '#fff' }}>Купить</Text>
-                  )}
+                <TouchableOpacity style={[styles.button, styles.confirmButton]} onPress={handlePurchase} disabled={!selectedService || buyLoading}>
+                  {buyLoading ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff' }}>Купить</Text>}
                 </TouchableOpacity>
               </View>
             </ScrollView>
           </View>
         </View>
       </Modal>
+
+      <ServiceDetailModal
+        visible={detailVisible}
+        onClose={() => setDetailVisible(false)}
+        serviceId={selectedServiceId}
+        clientId={clientId}
+      />
     </SafeAreaView>
   );
 }
 
-// Стили
+// Стили (как раньше, только добавлены стили для карточки и т.д.)
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F5F7FA' },
-  buyButton: {
-    backgroundColor: '#4F46E5',
-    margin: 16,
-    padding: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
+  buyButton: { backgroundColor: '#4F46E5', margin: 16, padding: 16, borderRadius: 12, alignItems: 'center' },
   buyButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   scrollContent: { paddingHorizontal: 16, paddingBottom: 20 },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 12,
-    marginTop: 4,
-  },
-  emptyText: {
-    textAlign: 'center',
-    color: '#9CA3AF',
-    fontSize: 16,
-    marginTop: 20,
-  },
-  // Карточка услуги
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    borderLeftWidth: 4,
-    borderLeftColor: '#4F46E5',
-  },
-  cardExpired: {
-    borderLeftColor: '#9CA3AF',
-    opacity: 0.8,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
+  sectionTitle: { fontSize: 18, fontWeight: '600', marginBottom: 12, marginTop: 4 },
+  emptyText: { textAlign: 'center', color: '#9CA3AF', fontSize: 16, marginTop: 20 },
+  card: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 12, borderLeftWidth: 4, borderLeftColor: '#4F46E5' },
+  cardExpired: { borderLeftColor: '#9CA3AF', opacity: 0.8 },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   serviceName: { fontSize: 16, fontWeight: '600', flex: 1 },
-  remainingBadge: {
-    fontSize: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 20,
-  },
-  activeBadge: {
-    backgroundColor: '#D1FAE5',
-    color: '#065F46',
-  },
-  expiredBadge: {
-    backgroundColor: '#F3F4F6',
-    color: '#6B7280',
-  },
+  remainingBadge: { fontSize: 12, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 20 },
+  activeBadge: { backgroundColor: '#D1FAE5', color: '#065F46' },
+  expiredBadge: { backgroundColor: '#F3F4F6', color: '#6B7280' },
   cardBody: {},
-  detailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
   detailLabel: { color: '#6B7280', fontSize: 14 },
   detailValue: { fontWeight: '500' },
-  // Раскрывающийся список использованных
-  expiredSection: {
-    marginTop: 8,
-  },
-  expiredToggle: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  expiredToggleText: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#6B7280',
-  },
-  expiredArrow: {
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  expiredList: {
-    marginTop: 12,
-  },
-  // Модальное окно
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    padding: 20,
-  },
-  modalContent: {
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    padding: 20,
-    maxHeight: '80%',
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    marginBottom: 20,
-    textAlign: 'center',
-  },
-  serviceOption: {
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    marginBottom: 8,
-  },
-  selectedOption: {
-    borderColor: '#4F46E5',
-    backgroundColor: '#EEF2FF',
-  },
+  expiredSection: { marginTop: 8 },
+  expiredToggle: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff', padding: 16, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB' },
+  expiredToggleText: { fontSize: 16, fontWeight: '500', color: '#6B7280' },
+  expiredArrow: { fontSize: 14, color: '#6B7280' },
+  expiredList: { marginTop: 12 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
+  modalContent: { backgroundColor: '#fff', borderRadius: 20, padding: 20, maxHeight: '80%' },
+  modalTitle: { fontSize: 20, fontWeight: '700', marginBottom: 20, textAlign: 'center' },
+  serviceOption: { padding: 16, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 8 },
+  selectedOption: { borderColor: '#4F46E5', backgroundColor: '#EEF2FF' },
   optionName: { fontSize: 16, fontWeight: '600' },
   optionMeta: { fontSize: 12, color: '#6B7280', marginTop: 2 },
   optionPrice: { fontSize: 14, marginTop: 4, color: '#1A1A1A' },
-  infoBox: {
-    backgroundColor: '#FEF3C7',
-    borderRadius: 12,
-    padding: 12,
-    marginVertical: 16,
-  },
-  infoText: {
-    fontSize: 14,
-    color: '#92400E',
-    textAlign: 'center',
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  button: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
+  infoBox: { backgroundColor: '#FEF3C7', borderRadius: 12, padding: 12, marginVertical: 16 },
+  infoText: { fontSize: 14, color: '#92400E', textAlign: 'center' },
+  modalButtons: { flexDirection: 'row', justifyContent: 'space-between' },
+  button: { flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
   cancelButton: { backgroundColor: '#F3F4F6', marginRight: 8 },
   confirmButton: { backgroundColor: '#4F46E5', marginLeft: 8 },
 });
