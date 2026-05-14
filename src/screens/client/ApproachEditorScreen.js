@@ -25,17 +25,13 @@ export default function ApproachEditorScreen() {
   const isWeightReps = exerciseType === 'Вес и повторения';
   const isTimeDist = exerciseType === 'Время и дистанция';
 
-  // Значения полей
   const [weight, setWeight] = useState('');
   const [reps, setReps] = useState('');
   const [distance, setDistance] = useState('');
   const [timeSeconds, setTimeSeconds] = useState('');
   const [loading, setLoading] = useState(false);
-
-  // Состояние "изменено ли" для кнопки "Обновить"
   const [isDirty, setIsDirty] = useState(false);
 
-  // Загружаем данные подхода, если редактируем
   useEffect(() => {
     if (isEditing) {
       fetchApproach();
@@ -52,7 +48,6 @@ export default function ApproachEditorScreen() {
         setWeight(approach.weigth ? approach.weigth.toString() : '');
         setReps(approach.repetitions ? approach.repetitions.toString() : '');
       } else {
-        // Время хранится в секундах, конвертируем в мм:сс или просто секунды
         const seconds = approach.time || 0;
         setTimeSeconds(seconds.toString());
         setDistance(approach.distance ? approach.distance.toString() : '');
@@ -63,7 +58,6 @@ export default function ApproachEditorScreen() {
   };
 
   const handleSave = async () => {
-    // Валидация
     if (isWeightReps) {
       if (!weight || !reps) {
         Alert.alert('Ошибка', 'Заполните вес и повторения');
@@ -106,13 +100,40 @@ export default function ApproachEditorScreen() {
         body: JSON.stringify(body),
       });
       if (!response.ok) throw new Error();
-      Alert.alert('Успех', isEditing ? 'Подход обновлён' : 'Подход добавлен');
       navigation.goBack();
     } catch (err) {
       Alert.alert('Ошибка', 'Не удалось сохранить подход');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleDelete = () => {
+    Alert.alert(
+      'Удаление подхода',
+      'Вы уверены, что хотите удалить этот подход?',
+      [
+        { text: 'Отмена', style: 'cancel' },
+        {
+          text: 'Удалить',
+          style: 'destructive',
+          onPress: async () => {
+            setLoading(true);
+            try {
+              const response = await fetch(`${API_URL}/workout/approaches/${approachId}`, {
+                method: 'DELETE',
+              });
+              if (!response.ok) throw new Error();
+              navigation.goBack();
+            } catch (err) {
+              Alert.alert('Ошибка', 'Не удалось удалить подход');
+            } finally {
+              setLoading(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleClear = () => {
@@ -126,16 +147,10 @@ export default function ApproachEditorScreen() {
     setIsDirty(false);
   };
 
-  // Отслеживание изменений для кнопки "Обновить"
   useEffect(() => {
-    if (isEditing) {
-      // Простая проверка: если поля изменились с момента загрузки – считаем dirty
-      // Можно реализовать точнее, но для простоты пока всегда разрешаем обновление
-      setIsDirty(true);
-    }
+    setIsDirty(true);
   }, [weight, reps, distance, timeSeconds]);
 
-  // Вспомогательный рендер для времени (можно добавить маску, пока просто секунды)
   const renderTimeInput = () => (
     <View>
       <Text style={styles.label}>Время (секунды)</Text>
@@ -156,26 +171,12 @@ export default function ApproachEditorScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1 }}
       >
-        {/* Верхняя панель с заголовком и кнопкой назад */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color="#1A1A1A" />
           </TouchableOpacity>
           <Text style={styles.title}>{isEditing ? 'Редактировать подход' : 'Новый подход'}</Text>
           <View style={{ width: 40 }} />
-        </View>
-
-        {/* Вкладки (TRACK активная, HISTORY/GRAPH пока заглушки) */}
-        <View style={styles.tabs}>
-          <TouchableOpacity style={[styles.tab, styles.activeTab]}>
-            <Text style={styles.activeTabText}>TRACK</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.tab} onPress={() => Alert.alert('История', 'Будет позже')}>
-            <Text style={styles.tabText}>HISTORY</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.tab} onPress={() => Alert.alert('График', 'Будет позже')}>
-            <Text style={styles.tabText}>GRAPH</Text>
-          </TouchableOpacity>
         </View>
 
         <ScrollView contentContainerStyle={styles.form}>
@@ -213,22 +214,29 @@ export default function ApproachEditorScreen() {
           )}
 
           <View style={styles.buttonRow}>
-            <TouchableOpacity style={[styles.button, styles.clearButton]} onPress={handleClear}>
-              <Text style={styles.clearButtonText}>CLEAR</Text>
-            </TouchableOpacity>
+            {isEditing ? (
+              <TouchableOpacity style={[styles.button, styles.deleteButton]} onPress={handleDelete}>
+                <Text style={styles.deleteButtonText}>Удалить</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity style={[styles.button, styles.clearButton]} onPress={handleClear}>
+                <Text style={styles.clearButtonText}>Очистить</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
-              style={[styles.button, styles.saveButton, (!isEditing || isDirty) && styles.saveButtonActive]}
+              style={[
+                styles.button,
+                styles.saveButton,
+                (isEditing ? isDirty : true) && styles.saveButtonActive,
+              ]}
               onPress={handleSave}
               disabled={loading || (isEditing && !isDirty)}
             >
               <Text style={styles.saveButtonText}>
-                {loading ? 'Сохранение...' : isEditing ? 'ОБНОВИТЬ' : 'СОХРАНИТЬ'}
+                {loading ? 'Сохранение...' : isEditing ? 'Обновить' : 'Сохранить'}
               </Text>
             </TouchableOpacity>
           </View>
-
-          {/* Можно также показать список существующих подходов (как на референсе) */}
-          {/* Пока оставим пустым, но при желании можно подгрузить подходы этого упражнения */}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -248,22 +256,6 @@ const styles = StyleSheet.create({
   },
   backButton: { padding: 8 },
   title: { fontSize: 18, fontWeight: '600', color: '#1A1A1A' },
-  tabs: {
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  activeTab: {
-    borderBottomWidth: 2,
-    borderBottomColor: '#4F46E5',
-  },
-  tabText: { fontSize: 14, color: '#6B7280' },
-  activeTabText: { fontSize: 14, fontWeight: '600', color: '#4F46E5' },
   form: { padding: 20, paddingBottom: 40 },
   label: { fontSize: 14, fontWeight: '500', marginBottom: 8, color: '#374151' },
   input: {
@@ -280,6 +272,8 @@ const styles = StyleSheet.create({
   button: { flex: 1, paddingVertical: 14, borderRadius: 30, alignItems: 'center', marginHorizontal: 6 },
   clearButton: { backgroundColor: '#F3F4F6' },
   clearButtonText: { color: '#4B5563', fontWeight: '600' },
+  deleteButton: { backgroundColor: '#FEE2E2' },
+  deleteButtonText: { color: '#DC2626', fontWeight: '600' },
   saveButton: { backgroundColor: '#9CA3AF' },
   saveButtonActive: { backgroundColor: '#4F46E5' },
   saveButtonText: { color: '#fff', fontWeight: '600' },

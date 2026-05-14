@@ -10,15 +10,15 @@ import {
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { API_URL } from '../../constants/api';
 
 const toYMD = (date) => date.toISOString().split('T')[0];
 
-// Компонент одного подхода с чекбоксом
-const ApproachItem = ({ approach, index, exerciseType, onToggle  }) => {
+// Компонент одного подхода – клик по строке открывает редактирование
+const ApproachItem = ({ approach, index, exerciseType, exerciseId, onToggle, onEdit }) => {
   const isWeightReps = exerciseType === 'Вес и повторения';
   const isTimeDist = exerciseType === 'Время и дистанция';
 
@@ -28,7 +28,7 @@ const ApproachItem = ({ approach, index, exerciseType, onToggle  }) => {
       return <Text style={styles.metricValue}>{weight}</Text>;
     }
     if (isTimeDist) {
-      const time = approach.time ? `${approach.time}` : '—';
+      const time = approach.time ? `${approach.time} сек` : '—';
       return <Text style={styles.metricValue}>{time}</Text>;
     }
     return <Text style={styles.metricValue}>—</Text>;
@@ -50,50 +50,77 @@ const ApproachItem = ({ approach, index, exerciseType, onToggle  }) => {
   const header2 = isWeightReps ? 'Повторы' : 'Дистанция';
 
   return (
-    <View style={styles.approachRow}>
+    <TouchableOpacity
+      onPress={() => {
+        // Передаём подход с exercise_id в редактор
+        onEdit({ ...approach, exercise_id: exerciseId });
+      }}
+      activeOpacity={0.7}
+    >
+      <View style={styles.approachRow}>
         <Text style={styles.approachNumber}>{index + 1}</Text>
         <View style={styles.metricContainer}>
-            <Text style={styles.metricLabel}>{header1}</Text>
-            {renderMetric1()}
+          <Text style={styles.metricLabel}>{header1}</Text>
+          {renderMetric1()}
         </View>
         <View style={styles.metricContainer}>
-            <Text style={styles.metricLabel}>{header2}</Text>
-            {renderMetric2()}
+          <Text style={styles.metricLabel}>{header2}</Text>
+          {renderMetric2()}
         </View>
-        <TouchableOpacity onPress={() => onToggle(approach.approache_id, approach.is_done)} style={styles.checkbox}>
-            <Ionicons
+        <TouchableOpacity
+          onPress={(e) => {
+            e.stopPropagation();
+            onToggle(approach.approache_id, approach.is_done);
+          }}
+          style={styles.checkbox}
+        >
+          <Ionicons
             name={approach.is_done ? 'checkbox' : 'square-outline'}
             size={24}
             color={approach.is_done ? '#4F46E5' : '#9CA3AF'}
-            />
+          />
         </TouchableOpacity>
-    </View>
+      </View>
+    </TouchableOpacity>
   );
 };
 
 // Карточка упражнения
-const ExerciseCard = ({ exercise, onToggleApproach }) => {
+const ExerciseCard = ({ exercise, onToggleApproach, onAddApproach, onEditApproach }) => {
   const typeName = exercise.type_name || (exercise.type_id === 1 ? 'Вес и повторения' : 'Время и дистанция');
   const isWeightReps = typeName === 'Вес и повторения';
   const header1 = isWeightReps ? 'Вес' : 'Время';
   const header2 = isWeightReps ? 'Повторы' : 'Дистанция';
 
+  // Сортируем подходы по времени (или по id) для стабильного порядка
+  const sortedApproaches = [...exercise.approaches].sort((a, b) => {
+    if (a.time && b.time) return a.time.localeCompare(b.time);
+    return a.approache_id - b.approache_id;
+  });
+
   return (
     <View style={styles.exerciseCard}>
-      <Text style={styles.exerciseName}>{exercise.name}</Text>
+      <View style={styles.exerciseHeader}>
+        <Text style={styles.exerciseName}>{exercise.name}</Text>
+        <TouchableOpacity onPress={() => onAddApproach(exercise)} style={styles.addApproachButton}>
+          <Ionicons name="add-circle-outline" size={24} color="#4F46E5" />
+        </TouchableOpacity>
+      </View>
       <View style={styles.approachHeader}>
         <Text style={styles.headerNumber}>#</Text>
         <Text style={styles.headerMetric}>{header1}</Text>
         <Text style={styles.headerMetric}>{header2}</Text>
         <Text style={styles.headerDone}>Сделано</Text>
       </View>
-      {exercise.approaches.map((approach, idx) => (
+      {sortedApproaches.map((approach, idx) => (
         <ApproachItem
           key={approach.approache_id}
           approach={approach}
           index={idx}
           exerciseType={typeName}
+          exerciseId={exercise.exercise_id}
           onToggle={onToggleApproach}
+          onEdit={onEditApproach}
         />
       ))}
     </View>
@@ -112,7 +139,6 @@ export default function TrainingScreen() {
   const [allTrainings, setAllTrainings] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Загрузить все тренировки клиента для навигации по датам
   const loadAllTrainings = useCallback(async () => {
     if (!clientId) return [];
     try {
@@ -129,7 +155,6 @@ export default function TrainingScreen() {
     }
   }, [clientId]);
 
-  // Загрузить тренировку по trainingId
   const loadTraining = useCallback(async (tid) => {
     if (!tid) {
       setExercises([]);
@@ -150,7 +175,6 @@ export default function TrainingScreen() {
     }
   }, []);
 
-  // Обновление чекбокса (is_done) на сервере
   const toggleApproach = async (approachId, currentIsDone) => {
     const newIsDone = !currentIsDone;
     try {
@@ -160,7 +184,7 @@ export default function TrainingScreen() {
         body: JSON.stringify({ is_done: newIsDone }),
       });
       if (!response.ok) throw new Error('Ошибка обновления');
-      // Оптимистичное обновление локального состояния
+      // Локальное обновление без перезагрузки
       setExercises(prevExercises =>
         prevExercises.map(ex => ({
           ...ex,
@@ -174,22 +198,58 @@ export default function TrainingScreen() {
     }
   };
 
-  // Инициализация: загружаем все тренировки и текущую
+  const openEditApproach = (approachWithExerciseId) => {
+    const exerciseId = approachWithExerciseId.exercise_id;
+    const exercise = exercises.find(ex => ex.exercise_id === exerciseId);
+    if (!exercise) {
+      Alert.alert('Ошибка', 'Упражнение не найдено');
+      return;
+    }
+    const exerciseType = exercise.type_name || (exercise.type_id === 1 ? 'Вес и повторения' : 'Время и дистанция');
+    navigation.navigate('ApproachEditor', {
+      trainingId: trainingId,
+      exerciseId: exerciseId,
+      approachId: approachWithExerciseId.approache_id,
+      exerciseType: exerciseType,
+    });
+  };
+
+  const openAddApproach = (exercise) => {
+    const exerciseType = exercise.type_name || (exercise.type_id === 1 ? 'Вес и повторения' : 'Время и дистанция');
+    navigation.navigate('ApproachEditor', {
+      trainingId: trainingId,
+      exerciseId: exercise.exercise_id,
+      approachId: null,
+      exerciseType: exerciseType,
+    });
+  };
+
+  // Инициализация
   useEffect(() => {
-    loadAllTrainings().then(trainings => {
+    const init = async () => {
+      const trainings = await loadAllTrainings();
       const existing = trainings.find(t => toYMD(new Date(t.start_datetime)) === currentDate);
       if (existing && !trainingId) {
         setTrainingId(existing.training_id);
-        loadTraining(existing.training_id);
+        await loadTraining(existing.training_id);
       } else if (trainingId) {
-        loadTraining(trainingId);
+        await loadTraining(trainingId);
       } else {
         setLoading(false);
       }
-    });
+    };
+    init();
   }, []);
 
-  // Переключение даты (стрелки)
+  // Обновляем тренировку при возврате из редактора (только если нужно)
+  useFocusEffect(
+    useCallback(() => {
+      if (trainingId) {
+        loadTraining(trainingId);
+      }
+    }, [trainingId, loadTraining])
+  );
+
   const changeDate = async (daysOffset) => {
     const newDate = new Date(currentDate);
     newDate.setDate(newDate.getDate() + daysOffset);
@@ -216,12 +276,15 @@ export default function TrainingScreen() {
   };
 
   const handleAdd = () => {
-    Alert.alert('Добавить', 'Добавление упражнения или подхода (будет позже)');
+    if (!trainingId) {
+      Alert.alert('Ошибка', 'Сначала создайте тренировку');
+      return;
+    }
+    Alert.alert('Добавить', 'Выберите упражнение из списка (будет позже)');
   };
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Верхняя панель */}
       <View style={styles.header}>
         <Text style={styles.logo}>Геркулес</Text>
         <View style={styles.headerIcons}>
@@ -234,7 +297,6 @@ export default function TrainingScreen() {
         </View>
       </View>
 
-      {/* Строка навигации по дате */}
       <View style={styles.dateNav}>
         <TouchableOpacity onPress={() => changeDate(-1)} style={styles.navArrow}>
           <Ionicons name="chevron-back" size={24} color="#4F46E5" />
@@ -247,7 +309,6 @@ export default function TrainingScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Основной контент */}
       {loading ? (
         <ActivityIndicator size="large" color="#4F46E5" style={{ marginTop: 40 }} />
       ) : trainingId ? (
@@ -260,6 +321,8 @@ export default function TrainingScreen() {
                 key={ex.exercise_id}
                 exercise={ex}
                 onToggleApproach={toggleApproach}
+                onAddApproach={openAddApproach}
+                onEditApproach={openEditApproach}
               />
             ))
           )}
@@ -314,7 +377,14 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
-  exerciseName: { fontSize: 18, fontWeight: '600', marginBottom: 12, color: '#1A1A1A' },
+  exerciseHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  exerciseName: { fontSize: 18, fontWeight: '600', color: '#1A1A1A', flex: 1 },
+  addApproachButton: { padding: 4 },
   approachHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -323,7 +393,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#E5E7EB',
     marginBottom: 8,
   },
-  headerNumber: { width: 10, fontWeight: '600', color: '#6B7280' },
+  headerNumber: { width: 30, fontWeight: '600', color: '#6B7280' },
   headerMetric: { flex: 1, fontWeight: '600', color: '#6B7280', textAlign: 'center' },
   headerDone: { width: 60, textAlign: 'center', fontWeight: '600', color: '#6B7280' },
   approachRow: {
@@ -333,7 +403,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
   },
-  approachNumber: { width: 10, fontWeight: '500', color: '#1A1A1A' },
+  approachNumber: { width: 30, fontWeight: '500', color: '#1A1A1A' },
   metricContainer: { flex: 1, alignItems: 'center' },
   metricLabel: { fontSize: 10, color: '#9CA3AF', marginBottom: 2 },
   metricValue: { fontSize: 14, fontWeight: '500', color: '#1F2937' },
