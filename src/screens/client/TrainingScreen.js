@@ -280,7 +280,7 @@ export default function TrainingScreen() {
       Alert.alert('Ошибка', 'Сначала создайте тренировку');
       return;
     }
-    Alert.alert('Добавить', 'Выберите упражнение из списка (будет позже)');
+    navigation.navigate('Categories', { trainingId }); // передаём trainingId
   };
 
   return (
