@@ -86,23 +86,44 @@ export default function CategoriesScreen() {
     }
   };
 
-  const handleDeleteCategory = (categoryId) => {
-    Alert.alert('Удаление', 'Удалить категорию и все упражнения в ней?', [
-      { text: 'Отмена', style: 'cancel' },
-      {
-        text: 'Удалить',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            const res = await fetch(`${API_URL}/workout/categories/${categoryId}`, { method: 'DELETE' });
-            if (!res.ok) throw new Error();
-            loadCategories();
-          } catch (err) {
-            Alert.alert('Ошибка', 'Не удалось удалить категорию');
-          }
+  const handleDeleteCategory = (categoryId, categoryName) => {
+    Alert.alert(
+      'Удаление категории',
+      `Вы действительно хотите удалить категорию "${categoryName}"? Все упражнения в ней также будут удалены.`,
+      [
+        { text: 'Отмена', style: 'cancel' },
+        {
+          text: 'Удалить',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // 1. Получаем все упражнения в этой категории
+              const exercisesRes = await fetch(`${API_URL}/workout/exercises/category/${categoryId}`);
+              const exercises = await exercisesRes.json();
+              // 2. Для каждого упражнения удаляем его (с проверкой подходов)
+              for (const ex of exercises) {
+                const delRes = await fetch(`${API_URL}/workout/exercises/${ex.exercise_id}`, { method: 'DELETE' });
+                if (!delRes.ok) {
+                  const error = await delRes.json();
+                  if (error.error && error.error.includes('approaches exist')) {
+                    Alert.alert('Ошибка', `Упражнение "${ex.name}" используется в тренировках. Сначала удалите все подходы с ним.`);
+                    return;
+                  }
+                  throw new Error(error.error || 'Ошибка удаления упражнения');
+                }
+              }
+              // 3. Удаляем категорию
+              const res = await fetch(`${API_URL}/workout/categories/${categoryId}`, { method: 'DELETE' });
+              if (!res.ok) throw new Error();
+              loadCategories(); // обновляем список
+              Alert.alert('Успех', 'Категория и все упражнения удалены');
+            } catch (err) {
+              Alert.alert('Ошибка', err.message || 'Не удалось удалить категорию');
+            }
+          },
         },
-      },
-    ]);
+      ]
+    );
   };
 
   const renderCategoryItem = ({ item }) => (
@@ -121,10 +142,10 @@ export default function CategoriesScreen() {
         <Text style={styles.categoryName}>{item.name}</Text>
       </TouchableOpacity>
       <View style={styles.menuContainer}>
-        <TouchableOpacity
-          onPress={() => openEditModal(item)}
-          style={styles.menuButton}
-        >
+        <TouchableOpacity onPress={() => handleDeleteCategory(item.category_id, item.name)} style={styles.deleteButton}>
+          <Ionicons name="trash-outline" size={20} color="#EF4444" />
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => openEditModal(item)} style={styles.menuButton}>
           <Ionicons name="ellipsis-vertical" size={20} color="#6B7280" />
         </TouchableOpacity>
       </View>
@@ -222,8 +243,8 @@ const styles = StyleSheet.create({
   categoryContent: { flex: 1, flexDirection: 'row', alignItems: 'center' },
   colorBadge: { width: 24, height: 24, borderRadius: 12, marginRight: 12 },
   categoryName: { fontSize: 16, color: '#1A1A1A' },
-  menuContainer: { width: 40, alignItems: 'flex-end' },
-  menuButton: { padding: 4 },
+  menuContainer: { width: 60, alignItems: 'flex-start', flexDirection: 'row' },
+  menuButton: { padding: 4,  marginLeft: 8 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
   modalContent: { backgroundColor: '#fff', borderRadius: 20, padding: 20, maxHeight: '80%' },
   modalTitle: { fontSize: 20, fontWeight: '700', marginBottom: 16, textAlign: 'center' },
@@ -235,4 +256,5 @@ const styles = StyleSheet.create({
   cancelButton: { backgroundColor: '#F3F4F6' },
   saveButton: { backgroundColor: '#4F46E5' },
   saveButtonText: { color: '#fff', fontWeight: '600' },
+  deleteButton: { padding: 4 },
 });

@@ -19,7 +19,7 @@ import { API_URL } from '../../constants/api';
 export default function ExercisesByCategoryScreen() {
   const navigation = useNavigation();
   const route = useRoute();
-  const { categoryId, categoryName, trainingId } = route.params; // получаем trainingId
+  const { categoryId, categoryName, trainingId } = route.params;
 
   const [exercises, setExercises] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -33,12 +33,20 @@ export default function ExercisesByCategoryScreen() {
 
   const loadExercises = async () => {
     try {
-      const res = await fetch(`${API_URL}/workout/exercises`);
+      const res = await fetch(`${API_URL}/workout/exercises/category/${categoryId}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      const filtered = data.filter(ex => ex.category_id === categoryId);
-      setExercises(filtered);
+      if (Array.isArray(data)) {
+        // Фильтруем только элементы с exercise_id
+        const valid = data.filter(ex => ex && ex.exercise_id);
+        setExercises(valid);
+      } else {
+        setExercises([]);
+      }
     } catch (err) {
       Alert.alert('Ошибка', 'Не удалось загрузить упражнения');
+      console.error(err);
+      setExercises([]);
     } finally {
       setLoading(false);
     }
@@ -106,23 +114,36 @@ export default function ExercisesByCategoryScreen() {
     }
   };
 
-  const handleDeleteExercise = (exerciseId) => {
-    Alert.alert('Удаление', 'Удалить упражнение? Это действие нельзя отменить.', [
-      { text: 'Отмена', style: 'cancel' },
-      {
-        text: 'Удалить',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            const res = await fetch(`${API_URL}/workout/exercises/${exerciseId}`, { method: 'DELETE' });
-            if (!res.ok) throw new Error();
-            loadExercises();
-          } catch (err) {
-            Alert.alert('Ошибка', 'Не удалось удалить упражнение');
-          }
+  const handleDeleteExercise = (exerciseId, exerciseName) => {
+    Alert.alert(
+      'Удаление упражнения',
+      `Удалить "${exerciseName}" из справочника? Если оно используется в тренировках, удаление будет невозможно.`,
+      [
+        { text: 'Отмена', style: 'cancel' },
+        {
+          text: 'Удалить',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const res = await fetch(`${API_URL}/workout/exercises/${exerciseId}`, { method: 'DELETE' });
+              if (!res.ok) {
+                const error = await res.json();
+                if (error.error && error.error.includes('approaches exist')) {
+                  Alert.alert('Ошибка', 'Упражнение используется в тренировках. Сначала удалите все подходы из тренировок.');
+                  return;
+                }
+                throw new Error(error.error || 'Ошибка удаления');
+              }
+              // Обновляем список упражнений
+              loadExercises();
+              Alert.alert('Успех', 'Упражнение удалено');
+            } catch (err) {
+              Alert.alert('Ошибка', err.message || 'Не удалось удалить упражнение');
+            }
+          },
         },
-      },
-    ]);
+      ]
+    );
   };
 
   const handleAddToTraining = async (exerciseId) => {
@@ -140,7 +161,6 @@ export default function ExercisesByCategoryScreen() {
         throw new Error(error.error || 'Ошибка добавления');
       }
       navigation.goBack(); // возврат на экран тренировки
-      navigation.goBack(); // возврат на экран тренировки
     } catch (err) {
       Alert.alert('Ошибка', err.message);
     }
@@ -153,6 +173,9 @@ export default function ExercisesByCategoryScreen() {
         {item.description ? <Text style={styles.exerciseDesc}>{item.description}</Text> : null}
       </TouchableOpacity>
       <View style={styles.menuContainer}>
+        <TouchableOpacity onPress={() => handleDeleteExercise(item.exercise_id, item.name)} style={styles.deleteButton}>
+          <Ionicons name="trash-outline" size={20} color="#EF4444" />
+        </TouchableOpacity>
         <TouchableOpacity onPress={() => openEditModal(item)} style={styles.menuButton}>
           <Ionicons name="ellipsis-vertical" size={20} color="#6B7280" />
         </TouchableOpacity>
@@ -182,12 +205,16 @@ export default function ExercisesByCategoryScreen() {
 
       <FlatList
         data={exercises}
-        keyExtractor={(item) => item.exercise_id.toString()}
+        keyExtractor={(item, index) => {
+          if (item && item.exercise_id) return item.exercise_id.toString();
+          return `fallback-${index}`;
+        }}
         renderItem={renderExerciseItem}
         contentContainerStyle={styles.list}
         ListEmptyComponent={<Text style={styles.emptyText}>Нет упражнений в этой категории</Text>}
       />
 
+      {/* Модальное окно */}
       <Modal visible={modalVisible} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -263,7 +290,7 @@ const styles = StyleSheet.create({
   exerciseContent: { flex: 1 },
   exerciseName: { fontSize: 16, fontWeight: '500', color: '#1A1A1A' },
   exerciseDesc: { fontSize: 12, color: '#6B7280', marginTop: 4 },
-  menuContainer: { width: 40, alignItems: 'flex-end' },
+  menuContainer: { width: 60, alignItems: 'flex-start', flexDirection: 'row' },
   menuButton: { padding: 4 },
   emptyText: { textAlign: 'center', marginTop: 40, color: '#9CA3AF' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
@@ -282,4 +309,5 @@ const styles = StyleSheet.create({
   cancelButton: { backgroundColor: '#F3F4F6' },
   saveButton: { backgroundColor: '#4F46E5' },
   saveButtonText: { color: '#fff', fontWeight: '600' },
+  deleteButton: { padding: 4, marginRight: 8 },
 });
