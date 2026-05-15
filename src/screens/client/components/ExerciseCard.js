@@ -10,7 +10,7 @@ export const ExerciseCard = ({
   onToggleApproach, 
   onAddApproach, 
   onEditApproach,
-  onDeleteExercise,   // новый проп
+  onDeleteExercise,
   onDragStart, 
   onDragEnd, 
   isActive 

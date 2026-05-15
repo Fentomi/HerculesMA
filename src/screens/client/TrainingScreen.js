@@ -247,14 +247,16 @@ export default function TrainingScreen() {
       {loading ? (
         <ActivityIndicator size="large" color="#4F46E5" style={{ marginTop: 40 }} />
       ) : trainingId ? (
-        <DragList
-          data={exercises}
-          keyExtractor={(item) => item.exercise_id.toString()}
-          onReordered={onReordered}
-          renderItem={renderItem}
-          contentContainerStyle={styles.content}
-          showsVerticalScrollIndicator={false}
-        />
+        <View style={{ flex: 1 }}>
+          <DragList
+            data={exercises}
+            keyExtractor={(item) => item.exercise_id.toString()}
+            onReordered={onReordered}
+            renderItem={renderItem}
+            contentContainerStyle={styles.content}
+            showsVerticalScrollIndicator={false}
+          />
+        </View>
       ) : (
         <View style={styles.emptyTrainingContainer}>
           <Text style={styles.noTrainingText}>Нет тренировки на эту дату</Text>
