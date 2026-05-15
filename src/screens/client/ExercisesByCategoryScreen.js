@@ -139,7 +139,7 @@ export default function ExercisesByCategoryScreen() {
         const error = await res.json();
         throw new Error(error.error || 'Ошибка добавления');
       }
-      Alert.alert('Успех', 'Упражнение добавлено в тренировку');
+      navigation.goBack(); // возврат на экран тренировки
       navigation.goBack(); // возврат на экран тренировки
     } catch (err) {
       Alert.alert('Ошибка', err.message);

@@ -123,7 +123,6 @@ export default function TrainingScreen() {
       if (!response.ok) throw new Error('Ошибка удаления');
       // Удаляем упражнение из локального состояния
       setExercises(prev => prev.filter(ex => ex.exercise_id !== exerciseId));
-      Alert.alert('Успех', 'Упражнение удалено из тренировки');
     } catch (err) {
       Alert.alert('Ошибка', 'Не удалось удалить упражнение');
     }
