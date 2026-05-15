@@ -5,19 +5,21 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  ScrollView,
   ActivityIndicator,
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import DragList from 'react-native-draglist'; // Импортируем DragList
 import { useAuth } from '../../contexts/AuthContext';
 import { API_URL } from '../../constants/api';
 
 const toYMD = (date) => date.toISOString().split('T')[0];
 
-// Компонент одного подхода – клик по строке открывает редактирование
+// ... компоненты ApproachItem и ExerciseCard остаются без изменений ...
+
+// Компонент одного подхода
 const ApproachItem = ({ approach, index, exerciseType, exerciseId, onToggle, onEdit }) => {
   const isWeightReps = exerciseType === 'Вес и повторения';
   const isTimeDist = exerciseType === 'Время и дистанция';
@@ -51,10 +53,7 @@ const ApproachItem = ({ approach, index, exerciseType, exerciseId, onToggle, onE
 
   return (
     <TouchableOpacity
-      onPress={() => {
-        // Передаём подход с exercise_id в редактор
-        onEdit({ ...approach, exercise_id: exerciseId });
-      }}
+      onPress={() => onEdit({ ...approach, exercise_id: exerciseId })}
       activeOpacity={0.7}
     >
       <View style={styles.approachRow}>
@@ -85,22 +84,28 @@ const ApproachItem = ({ approach, index, exerciseType, exerciseId, onToggle, onE
   );
 };
 
-// Карточка упражнения
-const ExerciseCard = ({ exercise, onToggleApproach, onAddApproach, onEditApproach }) => {
+// Карточка упражнения с drag-ручкой
+const ExerciseCard = ({ exercise, onToggleApproach, onAddApproach, onEditApproach, onDragStart, onDragEnd, isActive }) => {
   const typeName = exercise.type_name || (exercise.type_id === 1 ? 'Вес и повторения' : 'Время и дистанция');
   const isWeightReps = typeName === 'Вес и повторения';
   const header1 = isWeightReps ? 'Вес' : 'Время';
   const header2 = isWeightReps ? 'Повторы' : 'Дистанция';
 
-  // Сортируем подходы по времени (или по id) для стабильного порядка
   const sortedApproaches = [...exercise.approaches].sort((a, b) => {
     if (a.time && b.time) return a.time.localeCompare(b.time);
     return a.approache_id - b.approache_id;
   });
 
   return (
-    <View style={styles.exerciseCard}>
+    <View style={[styles.exerciseCard, isActive && styles.activeCard]}>
       <View style={styles.exerciseHeader}>
+        <TouchableOpacity
+          onPressIn={onDragStart}   // Функция DragList для начала перетаскивания
+          onPressOut={onDragEnd}    // Функция DragList для завершения
+          style={styles.dragHandle}
+        >
+          <Ionicons name="menu-outline" size={24} color="#9CA3AF" />
+        </TouchableOpacity>
         <Text style={styles.exerciseName}>{exercise.name}</Text>
         <TouchableOpacity onPress={() => onAddApproach(exercise)} style={styles.addApproachButton}>
           <Ionicons name="add-circle-outline" size={24} color="#4F46E5" />
@@ -139,6 +144,8 @@ export default function TrainingScreen() {
   const [allTrainings, setAllTrainings] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // ... (loadAllTrainings, loadTraining, toggleApproach, openEditApproach, openAddApproach остаются без изменений) ...
+  // Загрузить все тренировки клиента для навигации по датам
   const loadAllTrainings = useCallback(async () => {
     if (!clientId) return [];
     try {
@@ -155,6 +162,7 @@ export default function TrainingScreen() {
     }
   }, [clientId]);
 
+  // Загрузить тренировку по trainingId
   const loadTraining = useCallback(async (tid) => {
     if (!tid) {
       setExercises([]);
@@ -166,7 +174,9 @@ export default function TrainingScreen() {
       const res = await fetch(`${API_URL}/workout/trainings/${tid}/exercises`);
       if (!res.ok) throw new Error('Ошибка загрузки тренировки');
       const data = await res.json();
-      setExercises(data);
+      // Сортировка на клиенте на случай, если сервер не отсортировал
+      const sorted = data.sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+      setExercises(sorted);
     } catch (err) {
       Alert.alert('Ошибка', err.message);
       setExercises([]);
@@ -184,7 +194,6 @@ export default function TrainingScreen() {
         body: JSON.stringify({ is_done: newIsDone }),
       });
       if (!response.ok) throw new Error('Ошибка обновления');
-      // Локальное обновление без перезагрузки
       setExercises(prevExercises =>
         prevExercises.map(ex => ({
           ...ex,
@@ -224,7 +233,49 @@ export default function TrainingScreen() {
     });
   };
 
-  // Инициализация
+  // НОВАЯ ФУНКЦИЯ ДЛЯ ОБРАБОТКИ ПЕРЕТАСКИВАНИЯ
+  // Эта функция будет вызвана, когда пользователь отпустит элемент.
+  // newOrderList содержит массив с данными в новом порядке.
+  const onReordered = async (fromIndex, toIndex) => {
+    const newData = [...exercises]; // Создаем копию текущего списка
+    const [movedItem] = newData.splice(fromIndex, 1); // Удаляем перемещаемый элемент
+    newData.splice(toIndex, 0, movedItem); // Вставляем его на новое место
+    
+    setExercises(newData); // Немедленно обновляем UI для плавности
+
+    // Отправляем новый порядок на сервер
+    const orderIds = newData.map(ex => ex.exercise_id);
+    try {
+      const response = await fetch(`${API_URL}/workout/trainings/${trainingId}/exercises/order`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ exercise_order: orderIds }),
+      });
+      if (!response.ok) throw new Error();
+      console.log('Order saved successfully');
+    } catch (err) {
+      Alert.alert('Ошибка', 'Не удалось сохранить порядок упражнений');
+      // При ошибке перезагружаем исходный порядок
+      loadTraining(trainingId);
+    }
+  };
+
+  // Функция для рендера каждого элемента для DragList.
+  // Она получает от библиотеки необходимые ей пропсы onDragStart и onDragEnd,
+  // которые мы должны передать в наш ExerciseCard.
+  const renderItem = ({ item, onDragStart, onDragEnd, isActive }) => (
+    <ExerciseCard
+      exercise={item}
+      onToggleApproach={toggleApproach}
+      onAddApproach={openAddApproach}
+      onEditApproach={openEditApproach}
+      onDragStart={onDragStart}   // <-- Передаем в карточку
+      onDragEnd={onDragEnd}       // <-- Передаем в карточку
+      isActive={isActive}         // <-- Для визуального отличия перетаскиваемого элемента
+    />
+  );
+
+  // Инициализация: загружаем все тренировки и текущую
   useEffect(() => {
     const init = async () => {
       const trainings = await loadAllTrainings();
@@ -241,7 +292,7 @@ export default function TrainingScreen() {
     init();
   }, []);
 
-  // Обновляем тренировку при возврате из редактора (только если нужно)
+  // Обновляем тренировку при возврате из редактора
   useFocusEffect(
     useCallback(() => {
       if (trainingId) {
@@ -280,7 +331,7 @@ export default function TrainingScreen() {
       Alert.alert('Ошибка', 'Сначала создайте тренировку');
       return;
     }
-    navigation.navigate('Categories', { trainingId }); // передаём trainingId
+    navigation.navigate('Categories', { trainingId });
   };
 
   return (
@@ -312,21 +363,15 @@ export default function TrainingScreen() {
       {loading ? (
         <ActivityIndicator size="large" color="#4F46E5" style={{ marginTop: 40 }} />
       ) : trainingId ? (
-        <ScrollView contentContainerStyle={styles.content}>
-          {exercises.length === 0 ? (
-            <Text style={styles.emptyText}>Нет упражнений в этой тренировке</Text>
-          ) : (
-            exercises.map(ex => (
-              <ExerciseCard
-                key={ex.exercise_id}
-                exercise={ex}
-                onToggleApproach={toggleApproach}
-                onAddApproach={openAddApproach}
-                onEditApproach={openEditApproach}
-              />
-            ))
-          )}
-        </ScrollView>
+        // ЗДЕСЬ МЫ ИСПОЛЬЗУЕМ КОМПОНЕНТ DragList ВМЕСТО DraggableFlatList
+        <DragList
+          data={exercises}
+          keyExtractor={(item) => item.exercise_id.toString()}
+          onReordered={onReordered}          // <-- Основной коллбэк для сохранения нового порядка
+          renderItem={renderItem}            // <-- Функция для рендера элемента
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
+        />
       ) : (
         <View style={styles.emptyTrainingContainer}>
           <Text style={styles.noTrainingText}>Нет тренировки на эту дату</Text>
@@ -340,6 +385,7 @@ export default function TrainingScreen() {
   );
 }
 
+// Стили (styles) остаются полностью без изменений. Скопируйте их из вашего текущего файла.
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F5F7FA' },
   header: {
@@ -377,12 +423,17 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
+  activeCard: {
+    backgroundColor: '#F9FAFB',
+    shadowOpacity: 0.1,
+    elevation: 4,
+  },
   exerciseHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 12,
   },
+  dragHandle: { marginRight: 12 },
   exerciseName: { fontSize: 18, fontWeight: '600', color: '#1A1A1A', flex: 1 },
   addApproachButton: { padding: 4 },
   approachHeader: {
@@ -408,7 +459,6 @@ const styles = StyleSheet.create({
   metricLabel: { fontSize: 10, color: '#9CA3AF', marginBottom: 2 },
   metricValue: { fontSize: 14, fontWeight: '500', color: '#1F2937' },
   checkbox: { width: 60, alignItems: 'center' },
-  emptyText: { textAlign: 'center', marginTop: 40, color: '#9CA3AF' },
   emptyTrainingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   noTrainingText: { fontSize: 16, color: '#6B7280', marginBottom: 20 },
   startButton: {
