@@ -6,6 +6,7 @@ import ScheduleScreen from '../screens/client/ScheduleScreen';
 import MembershipsScreen from '../screens/client/MembershipsScreen';
 import ServicesScreen from '../screens/client/ServicesScreen';
 import TrainingDiaryScreen from '../screens/client/TrainingDiaryScreen';
+import MessengerScreen from '../screens/client/MessengerScreen';
 
 const Tab = createBottomTabNavigator();
 
@@ -22,6 +23,7 @@ export default function ClientTabs() {
           else if (route.name === 'Абонементы') iconName = 'card';
           else if (route.name === 'Услуги') iconName = 'list';
           else if (route.name === 'Дневник') iconName = 'book';
+          else if (route.name === 'Чаты') iconName = 'chatbubbles-outline';
           return <Ionicons name={iconName} size={size} color={color} />;
         },
       })}
@@ -29,6 +31,7 @@ export default function ClientTabs() {
       <Tab.Screen name="Расписание" component={ScheduleScreen} />
       <Tab.Screen name="Абонементы" component={MembershipsScreen} />
       <Tab.Screen name="Услуги" component={ServicesScreen} />
+      <Tab.Screen name="Чаты" component={MessengerScreen} />
       <Tab.Screen name="Дневник" component={TrainingDiaryScreen} options={{ tabBarLabel: 'Дневник тренировок' }} />
     </Tab.Navigator>
   );
