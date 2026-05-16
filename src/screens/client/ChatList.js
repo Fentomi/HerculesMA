@@ -6,11 +6,11 @@ import {
   FlatList,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   TextInput,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import GroupChatDialog from './GroupChatDialog';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const getInitials = (name) => (name ? name.slice(0, 2).toUpperCase() : 'Ч');
 const getAvatarColor = (id) => {
@@ -95,7 +95,7 @@ export default function ChatList({ chats, users, currentUserId, onSelectChat, on
         stickyHeaderIndices={filteredChats.length > 0 ? [0] : []}
       />
 
-      <FlatList
+      {/* <FlatList
         data={filteredUsers}
         keyExtractor={(item) => `user-${item.user_id}`}
         renderItem={renderUser}
@@ -107,7 +107,7 @@ export default function ChatList({ chats, users, currentUserId, onSelectChat, on
 
       {filteredChats.length === 0 && filteredUsers.length === 0 && (
         <Text style={styles.emptyText}>Ничего не найдено</Text>
-      )}
+      )} */}
 
       <GroupChatDialog
         visible={showGroupDialog}
