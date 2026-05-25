@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useAuth } from '../../contexts/AuthContext';
 import { API_URL } from '../../constants/api';
 import MembershipDetailModal from './MembershipDetailModal';
@@ -18,23 +19,28 @@ const DetailRow = ({ label, value }) => (
 );
 
 // Краткая карточка абонемента
-const MembershipCard = ({ item, onPress, onFreeze }) => {
-  const isActive = item.clientmembership_validuntil
-    ? new Date(item.clientmembership_validuntil) >= new Date()
-    : true;
-  const freezedays = item.membershiptype_freezedays || 0;
+const MembershipCard = ({ item, onPress, onFreeze, onUnfreeze }) => {
+  // Используем status_name, если есть, иначе вычисляем по дате
+  let statusText = item.status_name;
+  let statusStyle = {};
+  if (statusText === 'Активен') {
+    statusStyle = styles.activeBadge;
+  } else if (statusText === 'Заморожен') {
+    statusStyle = styles.frozenBadge;
+  } else {
+    statusStyle = styles.expiredBadge;
+    statusText = statusText || 'Закрыт';
+  }
 
   return (
     <TouchableOpacity
-      style={[styles.card, !isActive && styles.cardExpired]}
+      style={[styles.card, (statusText === 'Закрыт') && styles.cardExpired]}
       onPress={() => onPress(item)}
       activeOpacity={0.7}
     >
       <View style={styles.cardHeader}>
         <Text style={styles.typeName}>{item.membershiptype_name}</Text>
-        <Text style={[styles.badge, isActive ? styles.activeBadge : styles.expiredBadge]}>
-          {isActive ? 'Активен' : 'Истёк'}
-        </Text>
+        <Text style={[styles.badge, statusStyle]}>{statusText}</Text>
       </View>
       <View style={styles.cardBody}>
         <DetailRow
@@ -43,17 +49,22 @@ const MembershipCard = ({ item, onPress, onFreeze }) => {
             ? new Date(item.clientmembership_validuntil).toLocaleDateString()
             : 'Бессрочно'}
         />
-        {isActive && (
+        {statusText === 'Активен' && (
           <>
             <DetailRow label="Осталось дней" value={Math.ceil(
               (new Date(item.clientmembership_validuntil || Date.now()) - new Date()) / (1000 * 60 * 60 * 24)
             )} />
-            {freezedays > 0 && (
+            {item.membershiptype_freezedays > 0 && (
               <TouchableOpacity style={styles.freezeButton} onPress={() => onFreeze(item)}>
-                <Text style={styles.freezeText}>❄️ Заморозить ({freezedays} дн.)</Text>
+                <Text style={styles.freezeText}>❄️ Заморозить ({item.membershiptype_freezedays} дн.)</Text>
               </TouchableOpacity>
             )}
           </>
+        )}
+        {statusText === 'Заморожен' && (
+          <TouchableOpacity style={styles.unfreezeButton} onPress={() => onUnfreeze(item)}>
+            <Text style={styles.unfreezeText}>✅ Разморозить</Text>
+          </TouchableOpacity>
         )}
         <DetailRow
           label="Посещений"
@@ -76,6 +87,23 @@ export default function MembershipsScreen() {
   const [buyLoading, setBuyLoading] = useState(false);
   const [selectedMembershipId, setSelectedMembershipId] = useState(null);
   const [detailVisible, setDetailVisible] = useState(false);
+
+  // Состояния для заморозки
+  const [freezeModalVisible, setFreezeModalVisible] = useState(false);
+  const [freezeMembership, setFreezeMembership] = useState(null);
+  const [freezeStartDate, setFreezeStartDate] = useState(new Date());
+  const [plannedUnfreezeDate, setPlannedUnfreezeDate] = useState(null);
+  const [showStartPicker, setShowStartPicker] = useState(false);
+  const [showPlannedPicker, setShowPlannedPicker] = useState(false);
+  const [freezeLoading, setFreezeLoading] = useState(false);
+
+  // Состояния для разморозки
+  const [unfreezeModalVisible, setUnfreezeModalVisible] = useState(false);
+  const [unfreezeMembership, setUnfreezeMembership] = useState(null);
+  const [unfreezeDate, setUnfreezeDate] = useState(new Date());
+  const [showUnfreezePicker, setShowUnfreezePicker] = useState(false);
+  const [unfreezeLoading, setUnfreezeLoading] = useState(false);
+  const [freezeRecord, setFreezeRecord] = useState(null);
 
   const loadMemberships = useCallback(async () => {
     if (!clientId) return;
@@ -107,8 +135,96 @@ export default function MembershipsScreen() {
     }
   };
 
-  const handleFreeze = (item) => {
-    Alert.alert('Заморозка', `Заморозка на ${item.membershiptype_freezedays} дней (заглушка)`);
+  const formatDateYMD = (date) => {
+    if (!date) return null;
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  // Заморозка
+  const openFreezeModal = (item) => {
+    setFreezeMembership(item);
+    setFreezeStartDate(new Date());
+    setPlannedUnfreezeDate(null);
+    setFreezeModalVisible(true);
+  };
+
+  const submitFreeze = async () => {
+    if (!freezeMembership) return;
+    if (!freezeStartDate) {
+      Alert.alert('Ошибка', 'Выберите дату начала заморозки');
+      return;
+    }
+    setFreezeLoading(true);
+    try {
+      const payload = {
+        start_date: formatDateYMD(freezeStartDate),
+        planned_unfreeze_date: plannedUnfreezeDate ? formatDateYMD(plannedUnfreezeDate) : null,
+      };
+      const res = await fetch(`${API_URL}/clients/${clientId}/memberships/${freezeMembership.clientmembership_id}/freeze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Ошибка заморозки');
+      Alert.alert('Успех', 'Абонемент заморожен');
+      setFreezeModalVisible(false);
+      loadMemberships(); // обновляем список
+    } catch (err) {
+      Alert.alert('Ошибка', err.message);
+    } finally {
+      setFreezeLoading(false);
+    }
+  };
+
+  // Разморозка
+  const openUnfreezeModal = async (item) => {
+    setUnfreezeMembership(item);
+    setUnfreezeDate(new Date());
+    setUnfreezeModalVisible(true);
+    // Загружаем историю, чтобы получить дату начала заморозки и плановую дату
+    try {
+      const res = await fetch(`${API_URL}/clients/${clientId}/memberships/${item.clientmembership_id}/status-history`);
+      if (res.ok) {
+        const history = await res.json();
+        const activeFreeze = history.find(h => h.status_name === 'Заморожен' && !h.end_date);
+        setFreezeRecord(activeFreeze || null);
+      } else {
+        setFreezeRecord(null);
+      }
+    } catch (err) {
+      console.error(err);
+      setFreezeRecord(null);
+    }
+  };
+
+  const submitUnfreeze = async () => {
+    if (!unfreezeMembership) return;
+    if (!unfreezeDate) {
+      Alert.alert('Ошибка', 'Выберите дату разморозки');
+      return;
+    }
+    setUnfreezeLoading(true);
+    try {
+      const payload = { date: formatDateYMD(unfreezeDate) };
+      const res = await fetch(`${API_URL}/clients/${clientId}/memberships/${unfreezeMembership.clientmembership_id}/freeze`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Ошибка разморозки');
+      Alert.alert('Успех', 'Абонемент разморожен');
+      setUnfreezeModalVisible(false);
+      loadMemberships();
+    } catch (err) {
+      Alert.alert('Ошибка', err.message);
+    } finally {
+      setUnfreezeLoading(false);
+    }
   };
 
   const handlePurchase = async () => {
@@ -119,7 +235,7 @@ export default function MembershipsScreen() {
     setBuyLoading(true);
     const start = new Date(activationDate);
     const end = new Date(start);
-    end.setDate(end.getDate() + selectedType.membershiptype_timeperiod);
+    end.setDate(end.getDate() + selectedType.membershiptype_activityduration);
     const body = {
       clientMembership_activationDate: activationDate,
       clientmembership_validuntil: end.toISOString().slice(0, 10),
@@ -154,12 +270,10 @@ export default function MembershipsScreen() {
     setDetailVisible(true);
   };
 
-  const active = memberships.filter(m =>
-    m.clientmembership_validuntil ? new Date(m.clientmembership_validuntil) >= new Date() : true
-  );
-  const expired = memberships.filter(m =>
-    m.clientmembership_validuntil ? new Date(m.clientmembership_validuntil) < new Date() : false
-  );
+  // Разделение на активные/замороженные/закрытые для отображения в разных секциях
+  const active = memberships.filter(m => m.status_name === 'Активен');
+  const frozen = memberships.filter(m => m.status_name === 'Заморожен');
+  const closed = memberships.filter(m => m.status_name === 'Закрыт');
 
   if (loading) {
     return (
@@ -178,18 +292,45 @@ export default function MembershipsScreen() {
       <ScrollView style={styles.list}>
         {active.length > 0 && (
           <>
-            <Text style={styles.sectionTitle}>Активные абонементы</Text>
+            <Text style={styles.sectionTitle}>Активные</Text>
             {active.map(item => (
-              <MembershipCard key={item.clientmembership_id} item={item} onPress={openDetail} onFreeze={handleFreeze} />
+              <MembershipCard
+                key={item.clientmembership_id}
+                item={item}
+                onPress={openDetail}
+                onFreeze={openFreezeModal}
+                onUnfreeze={openUnfreezeModal}
+              />
             ))}
           </>
         )}
 
-        {expired.length > 0 && (
+        {frozen.length > 0 && (
           <>
-            <Text style={styles.sectionTitle}>Истекшие абонементы</Text>
-            {expired.map(item => (
-              <MembershipCard key={item.clientmembership_id} item={item} onPress={openDetail} onFreeze={handleFreeze} />
+            <Text style={styles.sectionTitle}>Замороженные</Text>
+            {frozen.map(item => (
+              <MembershipCard
+                key={item.clientmembership_id}
+                item={item}
+                onPress={openDetail}
+                onFreeze={openFreezeModal}
+                onUnfreeze={openUnfreezeModal}
+              />
+            ))}
+          </>
+        )}
+
+        {closed.length > 0 && (
+          <>
+            <Text style={styles.sectionTitle}>Закрытые</Text>
+            {closed.map(item => (
+              <MembershipCard
+                key={item.clientmembership_id}
+                item={item}
+                onPress={openDetail}
+                onFreeze={openFreezeModal}
+                onUnfreeze={openUnfreezeModal}
+              />
             ))}
           </>
         )}
@@ -199,7 +340,7 @@ export default function MembershipsScreen() {
         )}
       </ScrollView>
 
-      {/* Модалка покупки */}
+      {/* Модалка покупки (без изменений) */}
       <Modal visible={showBuyModal} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -214,7 +355,7 @@ export default function MembershipsScreen() {
                 >
                   <Text style={styles.typeName}>{type.membershiptype_name}</Text>
                   <Text style={styles.typeDetails}>
-                    {type.membershiptype_cost} ₽ · {type.membershiptype_timeperiod} дн. · {type.membershiptype_visitscount} пос.
+                    {type.membershiptype_cost} ₽ · {type.membershiptype_activityduration} дн. · {type.membershiptype_visitscount} пос.
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -234,6 +375,90 @@ export default function MembershipsScreen() {
                 </TouchableOpacity>
               </View>
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Модалка заморозки */}
+      <Modal visible={freezeModalVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.pickerModal}>
+            <Text style={styles.pickerTitle}>Заморозка абонемента</Text>
+            <TouchableOpacity onPress={() => setShowStartPicker(true)} style={styles.dateButton}>
+              <Text>Дата начала: {formatDateYMD(freezeStartDate)}</Text>
+            </TouchableOpacity>
+            {showStartPicker && (
+              <DateTimePicker
+                value={freezeStartDate}
+                mode="date"
+                display="default"
+                onChange={(event, selectedDate) => {
+                  setShowStartPicker(false);
+                  if (selectedDate) setFreezeStartDate(selectedDate);
+                }}
+              />
+            )}
+            <TouchableOpacity onPress={() => setShowPlannedPicker(true)} style={styles.dateButton}>
+              <Text>Плановая разморозка (необязательно): {plannedUnfreezeDate ? formatDateYMD(plannedUnfreezeDate) : 'не выбрана'}</Text>
+            </TouchableOpacity>
+            {showPlannedPicker && (
+              <DateTimePicker
+                value={plannedUnfreezeDate || freezeStartDate}
+                mode="date"
+                display="default"
+                onChange={(event, selectedDate) => {
+                  setShowPlannedPicker(false);
+                  if (selectedDate) setPlannedUnfreezeDate(selectedDate);
+                }}
+              />
+            )}
+            <View style={styles.pickerButtons}>
+              <TouchableOpacity onPress={() => setFreezeModalVisible(false)} style={styles.cancelButton}>
+                <Text>Отмена</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={submitFreeze} style={styles.submitButton} disabled={freezeLoading}>
+                <Text style={styles.submitButtonText}>{freezeLoading ? 'Загрузка...' : 'Заморозить'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Модалка разморозки */}
+      <Modal visible={unfreezeModalVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.pickerModal}>
+            <Text style={styles.pickerTitle}>Разморозка абонемента</Text>
+            {freezeRecord && (
+              <>
+                <Text style={styles.infoText}>Начало заморозки: {new Date(freezeRecord.start_date).toLocaleDateString()}</Text>
+                {freezeRecord.planned_unfreeze_date && (
+                  <Text style={styles.infoText}>Плановая дата: {new Date(freezeRecord.planned_unfreeze_date).toLocaleDateString()}</Text>
+                )}
+              </>
+            )}
+            <TouchableOpacity onPress={() => setShowUnfreezePicker(true)} style={styles.dateButton}>
+              <Text>Дата разморозки: {formatDateYMD(unfreezeDate)}</Text>
+            </TouchableOpacity>
+            {showUnfreezePicker && (
+              <DateTimePicker
+                value={unfreezeDate}
+                mode="date"
+                display="default"
+                onChange={(event, selectedDate) => {
+                  setShowUnfreezePicker(false);
+                  if (selectedDate) setUnfreezeDate(selectedDate);
+                }}
+              />
+            )}
+            <View style={styles.pickerButtons}>
+              <TouchableOpacity onPress={() => setUnfreezeModalVisible(false)} style={styles.cancelButton}>
+                <Text>Отмена</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={submitUnfreeze} style={styles.submitButton} disabled={unfreezeLoading}>
+                <Text style={styles.submitButtonText}>{unfreezeLoading ? 'Загрузка...' : 'Разморозить'}</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -263,15 +488,17 @@ const styles = StyleSheet.create({
   typeName: { fontSize: 16, fontWeight: '600', flex: 1 },
   badge: { fontSize: 12, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 20, overflow: 'hidden' },
   activeBadge: { backgroundColor: '#D1FAE5', color: '#065F46' },
+  frozenBadge: { backgroundColor: '#FEF3C7', color: '#D97706' },
   expiredBadge: { backgroundColor: '#F3F4F6', color: '#6B7280' },
   cardBody: {},
   detailRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
   detailLabel: { color: '#6B7280', fontSize: 14 },
   detailValue: { fontWeight: '500' },
-  freezeButton: { marginTop: 8, alignSelf: 'flex-start' },
-  freezeText: { color: '#4F46E5', fontSize: 14 },
+  freezeButton: { marginTop: 8, alignSelf: 'flex-start', backgroundColor: '#FEF3C7', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+  freezeText: { color: '#D97706', fontSize: 14 },
+  unfreezeButton: { marginTop: 8, alignSelf: 'flex-start', backgroundColor: '#D1FAE5', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+  unfreezeText: { color: '#065F46', fontSize: 14 },
   emptyText: { textAlign: 'center', marginTop: 40, color: '#9CA3AF', fontSize: 16 },
-  // Модалка покупки
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
   modalContent: { backgroundColor: '#fff', borderRadius: 20, padding: 20, maxHeight: '80%' },
   modalTitle: { fontSize: 20, fontWeight: '700', marginBottom: 20, textAlign: 'center' },
@@ -284,4 +511,12 @@ const styles = StyleSheet.create({
   button: { flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
   cancelButton: { backgroundColor: '#F3F4F6', marginRight: 8 },
   confirmButton: { backgroundColor: '#4F46E5', marginLeft: 8 },
+  // Стили для модалок заморозки
+  pickerModal: { backgroundColor: '#fff', borderRadius: 20, padding: 20, width: '100%' },
+  pickerTitle: { fontSize: 18, fontWeight: '700', marginBottom: 16, textAlign: 'center' },
+  dateButton: { padding: 12, backgroundColor: '#F3F4F6', borderRadius: 8, marginBottom: 12 },
+  infoText: { fontSize: 14, color: '#6B7280', marginBottom: 8 },
+  pickerButtons: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 16 },
+  submitButton: { padding: 12, backgroundColor: '#4F46E5', borderRadius: 8, flex: 1, marginLeft: 8, alignItems: 'center' },
+  submitButtonText: { color: '#fff', fontWeight: '600' },
 });
