@@ -9,6 +9,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import QRCode from 'react-native-qrcode-svg';
 import { API_URL } from '../../constants/api';
 
 const PAGE_SIZE = 5;
@@ -25,19 +26,20 @@ const MembershipDetailModal = ({ visible, onClose, membershipId, clientId }) => 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [qrModalVisible, setQrModalVisible] = useState(false);
 
   const loadDetail = useCallback(async () => {
     if (!clientId || !membershipId) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/clients/${clientId}/memberships/${membershipId}`);
+      const res = await fetch(`${API_URL}/clients/${clientId}/memberships_with_visits/${membershipId}`);
       if (!res.ok) {
         throw new Error('Ошибка загрузки');
       }
       const data = await res.json();
       setDetail(data);
-      setCurrentPage(1); // сброс на первую страницу при загрузке
+      setCurrentPage(1);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -52,6 +54,7 @@ const MembershipDetailModal = ({ visible, onClose, membershipId, clientId }) => 
       setDetail(null);
       setError(null);
       setCurrentPage(1);
+      setQrModalVisible(false);
     }
   }, [visible, loadDetail]);
 
@@ -71,95 +74,137 @@ const MembershipDetailModal = ({ visible, onClose, membershipId, clientId }) => 
     }
   };
 
+  const handleShowQr = () => {
+    setQrModalVisible(true);
+  };
+
   return (
-    <Modal visible={visible} animationType="slide" transparent>
-      <SafeAreaView style={styles.overlay}>
-        <View style={styles.modal}>
-          <View style={styles.header}>
-            <Text style={styles.title}>Детали абонемента</Text>
-            <TouchableOpacity onPress={onClose}>
-              <Text style={styles.closeBtn}>✕</Text>
-            </TouchableOpacity>
+    <>
+      {/* Основное модальное окно с деталями */}
+      <Modal visible={visible} animationType="slide" transparent>
+        <SafeAreaView style={styles.overlay}>
+          <View style={styles.modal}>
+            <View style={styles.header}>
+              <Text style={styles.title}>Детали абонемента</Text>
+              <TouchableOpacity onPress={onClose}>
+                <Text style={styles.closeBtn}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {loading ? (
+              <ActivityIndicator size="large" color="#4F46E5" style={{ marginTop: 40 }} />
+            ) : error ? (
+              <Text style={styles.error}>{error}</Text>
+            ) : detail ? (
+              <ScrollView showsVerticalScrollIndicator={false}>
+                <View style={styles.detailCard}>
+                  <View style={styles.typeHeader}>
+                    <Text style={styles.typeName}>{detail.membershiptype_name}</Text>
+                    <TouchableOpacity onPress={handleShowQr} style={styles.qrIcon}>
+                      <Text style={styles.qrIconText}>📱 QR</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={styles.cost}>{detail.membershiptype_cost} ₽</Text>
+
+                  <DetailRow label="Дата покупки" value={formatDate(detail.clientmembership_buydate)} />
+                  <DetailRow label="Активация" value={formatDate(detail.clientmembership_activationdate)} />
+                  <DetailRow
+                    label="Действует до"
+                    value={detail.clientmembership_validuntil ? formatDate(detail.clientmembership_validuntil) : 'Бессрочно'}
+                  />
+                  <DetailRow
+                    label="Посещения"
+                    value={`${detail.clientmembership_visitscount || 0} / ${detail.total_visits_allowed || '∞'}`}
+                  />
+                </View>
+
+                <Text style={styles.sectionTitle}>История посещений</Text>
+
+                {visits.length === 0 ? (
+                  <Text style={styles.noVisits}>Нет записей о посещениях</Text>
+                ) : (
+                  <>
+                    {currentVisits.map((visit, index) => (
+                      <View key={startIdx + index} style={styles.visitCard}>
+                        <DetailRow
+                          label="Вход"
+                          value={visit.visit_datetime ? new Date(visit.visit_datetime).toLocaleString() : '—'}
+                        />
+                        <DetailRow
+                          label="Выход"
+                          value={visit.exit_datetime ? new Date(visit.exit_datetime).toLocaleString() : '—'}
+                        />
+                        {visit.notes ? <DetailRow label="Заметка" value={visit.notes} /> : null}
+                      </View>
+                    ))}
+
+                    {totalPages > 1 && (
+                      <View style={styles.pagination}>
+                        <TouchableOpacity
+                          style={[styles.pageButton, currentPage === 1 && styles.pageButtonDisabled]}
+                          onPress={() => goToPage(currentPage - 1)}
+                          disabled={currentPage === 1}
+                        >
+                          <Text style={[styles.pageButtonText, currentPage === 1 && styles.pageButtonTextDisabled]}>
+                            ← Назад
+                          </Text>
+                        </TouchableOpacity>
+
+                        <Text style={styles.pageIndicator}>
+                          {currentPage} / {totalPages}
+                        </Text>
+
+                        <TouchableOpacity
+                          style={[styles.pageButton, currentPage === totalPages && styles.pageButtonDisabled]}
+                          onPress={() => goToPage(currentPage + 1)}
+                          disabled={currentPage === totalPages}
+                        >
+                          <Text style={[styles.pageButtonText, currentPage === totalPages && styles.pageButtonTextDisabled]}>
+                            Вперёд →
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </>
+                )}
+              </ScrollView>
+            ) : null}
           </View>
+        </SafeAreaView>
+      </Modal>
 
-          {loading ? (
-            <ActivityIndicator size="large" color="#4F46E5" style={{ marginTop: 40 }} />
-          ) : error ? (
-            <Text style={styles.error}>{error}</Text>
-          ) : detail ? (
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <View style={styles.detailCard}>
-                <Text style={styles.typeName}>{detail.membershiptype_name}</Text>
-                <Text style={styles.cost}>{detail.membershiptype_cost} ₽</Text>
-
-                <DetailRow label="Дата покупки" value={formatDate(detail.clientmembership_buydate)} />
-                <DetailRow label="Активация" value={formatDate(detail.clientmembership_activationdate)} />
-                <DetailRow
-                  label="Действует до"
-                  value={detail.clientmembership_validuntil ? formatDate(detail.clientmembership_validuntil) : 'Бессрочно'}
-                />
-                <DetailRow
-                  label="Посещения"
-                  value={`${detail.clientmembership_visitscount || 0} / ${detail.total_visits_allowed || '∞'}`}
-                />
-              </View>
-
-              <Text style={styles.sectionTitle}>История посещений</Text>
-
-              {visits.length === 0 ? (
-                <Text style={styles.noVisits}>Нет записей о посещениях</Text>
-              ) : (
+      {/* Модальное окно с QR-кодом */}
+      <Modal visible={qrModalVisible} animationType="fade" transparent>
+        <SafeAreaView style={styles.qrOverlay}>
+          <View style={styles.qrModal}>
+            <View style={styles.qrHeader}>
+              <Text style={styles.qrTitle}>QR-код абонемента</Text>
+              <TouchableOpacity onPress={() => setQrModalVisible(false)}>
+                <Text style={styles.closeBtn}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.qrContent}>
+              {detail?.qr_data ? (
                 <>
-                  {/* Таблица посещений текущей страницы */}
-                  {currentVisits.map((visit, index) => (
-                    <View key={startIdx + index} style={styles.visitCard}>
-                      <DetailRow
-                        label="Вход"
-                        value={visit.visit_datetime ? new Date(visit.visit_datetime).toLocaleString() : '—'}
-                      />
-                      <DetailRow
-                        label="Выход"
-                        value={visit.exit_datetime ? new Date(visit.exit_datetime).toLocaleString() : '—'}
-                      />
-                      {visit.notes ? <DetailRow label="Заметка" value={visit.notes} /> : null}
-                    </View>
-                  ))}
-
-                  {/* Пагинация */}
-                  {totalPages > 1 && (
-                    <View style={styles.pagination}>
-                      <TouchableOpacity
-                        style={[styles.pageButton, currentPage === 1 && styles.pageButtonDisabled]}
-                        onPress={() => goToPage(currentPage - 1)}
-                        disabled={currentPage === 1}
-                      >
-                        <Text style={[styles.pageButtonText, currentPage === 1 && styles.pageButtonTextDisabled]}>
-                          ← Назад
-                        </Text>
-                      </TouchableOpacity>
-
-                      <Text style={styles.pageIndicator}>
-                        {currentPage} / {totalPages}
-                      </Text>
-
-                      <TouchableOpacity
-                        style={[styles.pageButton, currentPage === totalPages && styles.pageButtonDisabled]}
-                        onPress={() => goToPage(currentPage + 1)}
-                        disabled={currentPage === totalPages}
-                      >
-                        <Text style={[styles.pageButtonText, currentPage === totalPages && styles.pageButtonTextDisabled]}>
-                          Вперёд →
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  )}
+                  <QRCode
+                    value={detail.qr_data}
+                    size={250}
+                    backgroundColor="white"
+                    color="black"
+                  />
+                  <Text style={styles.qrSubtext}>
+                    {detail.membershiptype_name}
+                  </Text>
+                  <Text style={styles.qrData}>{detail.qr_data}</Text>
                 </>
+              ) : (
+                <Text style={styles.error}>QR-код для этого абонемента не сгенерирован</Text>
               )}
-            </ScrollView>
-          ) : null}
-        </View>
-      </SafeAreaView>
-    </Modal>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+    </>
   );
 };
 
@@ -190,7 +235,20 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 20,
   },
-  typeName: { fontSize: 20, fontWeight: '700', marginBottom: 4 },
+  typeHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  typeName: { fontSize: 20, fontWeight: '700', flex: 1 },
+  qrIcon: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#4F46E5',
+    borderRadius: 20,
+  },
+  qrIconText: { color: '#fff', fontSize: 14, fontWeight: '600' },
   cost: { fontSize: 18, color: '#4F46E5', fontWeight: '600', marginBottom: 12 },
   detailRow: {
     flexDirection: 'row',
@@ -246,6 +304,45 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6B7280',
     fontWeight: '500',
+  },
+  // Стили для QR-модального окна
+  qrOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  qrModal: {
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    padding: 20,
+    width: '90%',
+    maxWidth: 350,
+  },
+  qrHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  qrTitle: { fontSize: 18, fontWeight: '700' },
+  qrContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+  },
+  qrSubtext: {
+    marginTop: 16,
+    fontSize: 16,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  qrData: {
+    marginTop: 12,
+    fontSize: 10,
+    color: '#9CA3AF',
+    textAlign: 'center',
   },
 });
 
